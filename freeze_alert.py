@@ -161,7 +161,7 @@ def check_freezing_conditions(forecast_periods):
         event = frost_events[0]
         alerts.append({
             "type": "FIRST FROST",
-            "message": f"First frost of the season expected!\nTime: {event['start_time']}\nMinimum temperature: {event['min_temp']}°F\nDuration: {event['duration_hours']} hours",
+            "message": f"First frost warning\n{event['start_time']}\nLow: {event['min_temp']}F\nDuration: {event['duration_hours']}hrs",
             "event": event
         })
         history["first_frost_alerted"] = event["start_time"]
@@ -171,7 +171,7 @@ def check_freezing_conditions(forecast_periods):
         event = frost_events[1]
         alerts.append({
             "type": "SECOND FROST",
-            "message": f"Second frost expected!\nTime: {event['start_time']}\nMinimum temperature: {event['min_temp']}°F\nDuration: {event['duration_hours']} hours",
+            "message": f"Second frost warning\n{event['start_time']}\nLow: {event['min_temp']}F\nDuration: {event['duration_hours']}hrs",
             "event": event
         })
         history["second_frost_alerted"] = event["start_time"]
@@ -183,7 +183,7 @@ def check_freezing_conditions(forecast_periods):
         if alert_key not in history.get("extended_freeze_alerts", []):
             alerts.append({
                 "type": "EXTENDED FREEZE",
-                "message": f"Extended freeze warning!\nStart time: {freeze['start_time']}\nDuration: {freeze['duration_hours']} hours below freezing\nMinimum temperature: {freeze['min_temp']}°F",
+                "message": f"Extended freeze\n{freeze['start_time']}\nLow: {freeze['min_temp']}F\nDuration: {freeze['duration_hours']}hrs",
                 "event": freeze
             })
             if "extended_freeze_alerts" not in history:
@@ -224,32 +224,27 @@ def send_email_alert(alerts, min_temp_48h=None, min_temp_7d=None):
 
     # Determine subject based on whether there are alerts
     if alerts:
-        msg["Subject"] = f"⚠️ FREEZE ALERT - {LOCATION_NAME}"
+        msg["Subject"] = f"FREEZE ALERT - {LOCATION_NAME}"
     else:
-        msg["Subject"] = f"✓ Weather Check OK - {LOCATION_NAME}"
+        msg["Subject"] = f"Weather OK - {LOCATION_NAME}"
 
     # Build email body
-    body = f"Weather report for {LOCATION_NAME} ({ZIP_CODE}):\n\n"
+    body = ""
 
     if alerts:
         for alert in alerts:
-            body += f"{'='*50}\n"
             body += f"{alert['type']}\n"
-            body += f"{'='*50}\n"
             body += alert['message']
-            body += f"\n\n"
+            body += "\n\n"
     else:
-        body += "✓ No freezing conditions detected in the forecast.\n\n"
+        body += "No freeze detected\n"
         if min_temp_48h is not None:
-            body += f"Minimum temp next 48 hours: {min_temp_48h:.0f}°F\n"
+            body += f"48hr low: {min_temp_48h:.0f}F\n"
         if min_temp_7d is not None:
-            body += f"Minimum temp next 7 days: {min_temp_7d:.0f}°F\n"
-        body += "\nYour freeze alert system is working properly.\n"
+            body += f"7day low: {min_temp_7d:.0f}F\n"
 
-    body += f"\n{'='*50}\n"
-    body += f"This is an automated alert from your freeze monitoring system.\n"
-    body += f"Location: {LOCATION_NAME} (Lat: {LAT}, Lon: {LON})\n"
-    body += f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} PST"
+    body += f"\n{LOCATION_NAME}\n"
+    body += f"{datetime.now().strftime('%m/%d %I:%M%p')}"
 
     msg.attach(MIMEText(body, "plain"))
 
@@ -269,28 +264,53 @@ def send_email_alert(alerts, min_temp_48h=None, min_temp_7d=None):
             print(f"\n{alert['type']}:")
             print(alert['message'])
 
-def simulate_test_alerts(test_mode):
-    """Simulate alerts for testing"""
+def simulate_test_alerts(test_mode, forecast_data):
+    """Simulate alerts for testing using real forecast data"""
     test_alerts = []
+
+    # Get real temperature data from forecast for realistic test
+    current_temp = None
+    min_temp_today = None
+
+    if forecast_data:
+        # Get current and min temps from real data
+        temps_today = []
+        for i, period in enumerate(forecast_data[:24]):  # Next 24 hours
+            temp = period.get("temperature", None)
+            if isinstance(temp, dict):
+                temp = temp.get("value", None)
+            if temp is not None and isinstance(temp, (int, float)):
+                temps_today.append(temp)
+                if i == 0:
+                    current_temp = temp
+
+        if temps_today:
+            min_temp_today = min(temps_today)
+
+    # Use real temps if available, otherwise use defaults
+    if current_temp is None:
+        current_temp = 45
+    if min_temp_today is None:
+        min_temp_today = 38
 
     if test_mode in ["frost1", "all"]:
         test_alerts.append({
-            "type": "FIRST FROST",
-            "message": f"TEST ALERT - First frost of the season expected!\nTime: Tonight at 11 PM\nMinimum temperature: 28°F\nDuration: 3 hours\n\nThis is a TEST message to verify SMS delivery is working.",
+            "type": "TEST FIRST FROST",
+            "message": f"TEST ALERT - First frost\nCurrent: {current_temp:.0f}F\nTonight low: {min_temp_today:.0f}F\nSimulated frost: 28F\nDuration: 3hrs",
             "event": {"start_time": "TEST", "duration_hours": 3, "min_temp": 28}
         })
 
     if test_mode in ["frost2", "all"]:
         test_alerts.append({
-            "type": "SECOND FROST",
-            "message": f"TEST ALERT - Second frost expected!\nTime: Tomorrow at 2 AM\nMinimum temperature: 30°F\nDuration: 2 hours\n\nThis is a TEST message to verify SMS delivery is working.",
+            "type": "TEST SECOND FROST",
+            "message": f"TEST ALERT - Second frost\nCurrent: {current_temp:.0f}F\nTonight low: {min_temp_today:.0f}F\nSimulated frost: 30F\nDuration: 2hrs",
             "event": {"start_time": "TEST", "duration_hours": 2, "min_temp": 30}
         })
 
     if test_mode in ["extended_freeze", "all"]:
         test_alerts.append({
-            "type": "EXTENDED FREEZE",
-            "message": f"TEST ALERT - Extended freeze warning!\nStart time: Tonight at 9 PM\nDuration: 6 hours below freezing\nMinimum temperature: 25°F\n\nThis is a TEST message to verify SMS delivery is working.",
+            "type": "TEST EXTENDED FREEZE",
+            "message": f"TEST ALERT - Extended freeze\nCurrent: {current_temp:.0f}F\nTonight low: {min_temp_today:.0f}F\nSimulated freeze: 25F\nDuration: 6hrs",
             "event": {"start_time": "TEST", "duration_hours": 6, "min_temp": 25}
         })
 
@@ -306,9 +326,14 @@ def main():
         test_mode = sys.argv[1].lower()
         if test_mode in ["frost1", "frost2", "extended_freeze", "all"]:
             print(f"Running in TEST MODE: {test_mode}")
-            alerts = simulate_test_alerts(test_mode)
+            print(f"Fetching real weather data for {LOCATION_NAME}...")
+
+            # Get real forecast data for the test
+            forecast = get_weather_forecast()
+
+            alerts = simulate_test_alerts(test_mode, forecast)
             if alerts:
-                print(f"Sending {len(alerts)} TEST alert(s)")
+                print(f"Sending {len(alerts)} TEST alert(s) with real weather data")
                 send_email_alert(alerts)
             return
         else:
