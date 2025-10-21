@@ -23,10 +23,14 @@ on:
 jobs:
   check-freezing:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
     - name: Checkout repository
       uses: actions/checkout@v3
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Set up Python
       uses: actions/setup-python@v4
@@ -55,6 +59,16 @@ jobs:
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
-        git add alert_history.json || true
-        git diff --quiet && git diff --staged --quiet || git commit -m "Update alert history"
-        git push || true
+
+        # Check if alert_history.json exists and has changes
+        if [ -f alert_history.json ]; then
+          git add alert_history.json
+          if ! git diff --quiet --staged; then
+            git commit -m "Update alert history"
+            git push
+          else
+            echo "No changes to alert history"
+          fi
+        else
+          echo "No alert history file created yet"
+        fi
