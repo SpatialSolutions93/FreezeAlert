@@ -201,11 +201,8 @@ def check_freezing_conditions(forecast_periods):
     save_alert_history(history)
     return alerts
 
-def send_email_alert(alerts):
+def send_email_alert(alerts, min_temp_48h=None, min_temp_7d=None):
     """Send email alerts using Gmail SMTP"""
-    if not alerts:
-        return
-
     # Get email credentials from environment variables
     sender_email = os.environ.get("SENDER_EMAIL")
     sender_password = os.environ.get("SENDER_PASSWORD")  # App-specific password
@@ -213,28 +210,44 @@ def send_email_alert(alerts):
 
     if not sender_email or not sender_password:
         print("Email credentials not configured. Set SENDER_EMAIL and SENDER_PASSWORD environment variables.")
-        print("Alerts that would have been sent:")
-        for alert in alerts:
-            print(f"\n{alert['type']}:")
-            print(alert['message'])
+        if alerts:
+            print("Alerts that would have been sent:")
+            for alert in alerts:
+                print(f"\n{alert['type']}:")
+                print(alert['message'])
         return
 
     # Create message
     msg = MIMEMultipart()
     msg["From"] = sender_email
     msg["To"] = recipient_email
-    msg["Subject"] = f"FREEZE ALERT - {LOCATION_NAME}"
+
+    # Determine subject based on whether there are alerts
+    if alerts:
+        msg["Subject"] = f"⚠️ FREEZE ALERT - {LOCATION_NAME}"
+    else:
+        msg["Subject"] = f"✓ Weather Check OK - {LOCATION_NAME}"
 
     # Build email body
-    body = f"Weather alerts for {LOCATION_NAME} ({ZIP_CODE}):\n\n"
-    for alert in alerts:
-        body += f"{'='*50}\n"
-        body += f"{alert['type']}\n"
-        body += f"{'='*50}\n"
-        body += alert['message']
-        body += f"\n\n"
+    body = f"Weather report for {LOCATION_NAME} ({ZIP_CODE}):\n\n"
 
-    body += f"\nThis is an automated alert from your freeze monitoring system.\n"
+    if alerts:
+        for alert in alerts:
+            body += f"{'='*50}\n"
+            body += f"{alert['type']}\n"
+            body += f"{'='*50}\n"
+            body += alert['message']
+            body += f"\n\n"
+    else:
+        body += "✓ No freezing conditions detected in the forecast.\n\n"
+        if min_temp_48h is not None:
+            body += f"Minimum temp next 48 hours: {min_temp_48h:.0f}°F\n"
+        if min_temp_7d is not None:
+            body += f"Minimum temp next 7 days: {min_temp_7d:.0f}°F\n"
+        body += "\nYour freeze alert system is working properly.\n"
+
+    body += f"\n{'='*50}\n"
+    body += f"This is an automated alert from your freeze monitoring system.\n"
     body += f"Location: {LOCATION_NAME} (Lat: {LAT}, Lon: {LON})\n"
     body += f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} PST"
 
@@ -256,8 +269,53 @@ def send_email_alert(alerts):
             print(f"\n{alert['type']}:")
             print(alert['message'])
 
+def simulate_test_alerts(test_mode):
+    """Simulate alerts for testing"""
+    test_alerts = []
+
+    if test_mode in ["frost1", "all"]:
+        test_alerts.append({
+            "type": "FIRST FROST",
+            "message": f"TEST ALERT - First frost of the season expected!\nTime: Tonight at 11 PM\nMinimum temperature: 28°F\nDuration: 3 hours\n\nThis is a TEST message to verify SMS delivery is working.",
+            "event": {"start_time": "TEST", "duration_hours": 3, "min_temp": 28}
+        })
+
+    if test_mode in ["frost2", "all"]:
+        test_alerts.append({
+            "type": "SECOND FROST",
+            "message": f"TEST ALERT - Second frost expected!\nTime: Tomorrow at 2 AM\nMinimum temperature: 30°F\nDuration: 2 hours\n\nThis is a TEST message to verify SMS delivery is working.",
+            "event": {"start_time": "TEST", "duration_hours": 2, "min_temp": 30}
+        })
+
+    if test_mode in ["extended_freeze", "all"]:
+        test_alerts.append({
+            "type": "EXTENDED FREEZE",
+            "message": f"TEST ALERT - Extended freeze warning!\nStart time: Tonight at 9 PM\nDuration: 6 hours below freezing\nMinimum temperature: 25°F\n\nThis is a TEST message to verify SMS delivery is working.",
+            "event": {"start_time": "TEST", "duration_hours": 6, "min_temp": 25}
+        })
+
+    return test_alerts
+
 def main():
     """Main function to check weather and send alerts"""
+    import sys
+
+    # Check for test mode
+    test_mode = None
+    if len(sys.argv) > 1:
+        test_mode = sys.argv[1].lower()
+        if test_mode in ["frost1", "frost2", "extended_freeze", "all"]:
+            print(f"Running in TEST MODE: {test_mode}")
+            alerts = simulate_test_alerts(test_mode)
+            if alerts:
+                print(f"Sending {len(alerts)} TEST alert(s)")
+                send_email_alert(alerts)
+            return
+        else:
+            print(f"Invalid test mode: {test_mode}")
+            print("Valid options: frost1, frost2, extended_freeze, all")
+            return
+
     print(f"Checking weather for {LOCATION_NAME}...")
 
     # Get weather forecast
@@ -272,11 +330,34 @@ def main():
     # Check for freezing conditions
     alerts = check_freezing_conditions(forecast)
 
+    # Calculate minimum temperatures for status report
+    min_temp_48h = None
+    min_temp_7d = None
+
+    if forecast:
+        temps_48h = []
+        temps_7d = []
+        for i, period in enumerate(forecast):
+            temp = period.get("temperature", None)
+            if isinstance(temp, dict):
+                temp = temp.get("value", None)
+            if temp is not None and isinstance(temp, (int, float)):
+                temps_7d.append(temp)
+                if i < 48:
+                    temps_48h.append(temp)
+
+        if temps_48h:
+            min_temp_48h = min(temps_48h)
+        if temps_7d:
+            min_temp_7d = min(temps_7d)
+
+    # Always send an email - either with alerts or status update
     if alerts:
         print(f"Found {len(alerts)} alert(s) to send")
-        send_email_alert(alerts)
     else:
-        print("No new freezing conditions detected")
+        print("No freezing conditions detected - sending status update")
+
+    send_email_alert(alerts, min_temp_48h, min_temp_7d)
 
     # Print next 48 hours summary for logging
     print("\nNext 48 hours temperature summary:")

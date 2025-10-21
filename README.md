@@ -38,7 +38,13 @@ To test the system manually:
 
 1. Go to Actions tab
 2. Select "Freeze Alert Check" workflow
-3. Click "Run workflow" → "Run workflow"
+3. Click "Run workflow"
+4. Choose a test mode from dropdown (or leave blank for real weather check):
+   - **frost1**: Sends a test "First Frost" alert
+   - **frost2**: Sends a test "Second Frost" alert
+   - **extended_freeze**: Sends a test "Extended Freeze" alert
+   - **all**: Sends all 3 test alerts
+5. Click green "Run workflow" button
 
 ## Email to Text Setup (Optional)
 
@@ -55,12 +61,15 @@ To receive alerts as text messages:
 ## How It Works
 
 1. Checks weather forecast twice daily (6 AM and 6 PM PST)
-2. Analyzes next 7 days for freezing conditions
-3. Sends email alerts when:
+2. Retrieves hourly forecast data for next 7 days (168 hours)
+3. Analyzes every hour of the forecast for freezing conditions
+4. Sends email/SMS alerts when:
    - First frost of season is detected
    - Second frost occurs (at least 24 hours after first)
    - Temperature will be below 32°F for more than 1 hour
-4. Maintains history to avoid duplicate alerts
+5. Maintains history to avoid duplicate alerts
+
+The system checks **every hour** of the forecast (up to 168 hours/7 days out), so you'll know about any freezing temperatures with plenty of advance warning.
 
 ## Location
 

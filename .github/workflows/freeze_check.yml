@@ -7,6 +7,18 @@ on:
     # Also run at 6 PM PST for evening check (2 AM UTC next day during PST, 1 AM UTC during PDT)
     - cron: '0 2 * * *'
   workflow_dispatch:  # Allow manual trigger for testing
+    inputs:
+      test_mode:
+        description: 'Test mode (leave empty for real check, or use: frost1, frost2, extended_freeze, all)'
+        required: false
+        default: ''
+        type: choice
+        options:
+          - ''
+          - 'frost1'
+          - 'frost2'
+          - 'extended_freeze'
+          - 'all'
 
 jobs:
   check-freezing:
@@ -32,7 +44,12 @@ jobs:
         SENDER_PASSWORD: ${{ secrets.SENDER_PASSWORD }}
         RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
       run: |
-        python freeze_alert.py
+        if [ -n "${{ github.event.inputs.test_mode }}" ]; then
+          echo "Running in test mode: ${{ github.event.inputs.test_mode }}"
+          python freeze_alert.py ${{ github.event.inputs.test_mode }}
+        else
+          python freeze_alert.py
+        fi
 
     - name: Commit alert history
       run: |
