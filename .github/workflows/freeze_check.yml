@@ -2,10 +2,9 @@ name: Freeze Alert Check
 
 on:
   schedule:
-    # Run at 6 AM PST every day (2 PM UTC during PST, 1 PM UTC during PDT)
-    - cron: '0 14 * * *'
-    # Also run at 6 PM PST for evening check (2 AM UTC next day during PST, 1 AM UTC during PDT)
-    - cron: '0 2 * * *'
+    # Run exactly at 6 AM and 6 PM Pacific, automatically handling DST shifts
+    - cron: '0 6,18 * * *'
+      timezone: 'America/Los_Angeles'
   workflow_dispatch:  # Allow manual trigger for testing
     inputs:
       test_mode:
@@ -47,6 +46,7 @@ jobs:
         SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
         SENDER_PASSWORD: ${{ secrets.SENDER_PASSWORD }}
         RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
+        FORCE_RUN: ${{ github.event_name == 'workflow_dispatch' && '1' || '' }}
       run: |
         if [ -n "${{ github.event.inputs.test_mode }}" ]; then
           echo "Running in test mode: ${{ github.event.inputs.test_mode }}"

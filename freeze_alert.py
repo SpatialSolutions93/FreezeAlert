@@ -3,15 +3,18 @@ import os
 import json
 import requests
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 import smtplib
 from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 
 # Configuration
 LAT = 45.0411  # Scotts Mills, Oregon
 LON = -122.6700
 ZIP_CODE = "97375"
 LOCATION_NAME = "Scotts Mills, Oregon"
+
+PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
+SCHEDULED_HOURS = {6, 18}
 
 # Alert tracking file to persist state between runs
 ALERT_HISTORY_FILE = "alert_history.json"
@@ -201,6 +204,10 @@ def check_freezing_conditions(forecast_periods):
     save_alert_history(history)
     return alerts
 
+def get_pacific_now():
+    """Return the current time in Pacific time."""
+    return datetime.now(PACIFIC_TZ)
+
 def send_email_alert(alerts, min_temp_48h=None, min_temp_7d=None):
     """Send email alerts using Gmail SMTP"""
     # Get email credentials from environment variables
@@ -217,36 +224,38 @@ def send_email_alert(alerts, min_temp_48h=None, min_temp_7d=None):
                 print(alert['message'])
         return
 
-    # Create message
-    msg = MIMEMultipart()
-    msg["From"] = sender_email
-    msg["To"] = recipient_email
-
-    # Determine subject based on whether there are alerts
-    if alerts:
-        msg["Subject"] = f"FREEZE ALERT - {LOCATION_NAME}"
-    else:
-        msg["Subject"] = f"Weather OK - {LOCATION_NAME}"
-
     # Build email body
-    body = ""
+    body_lines = []
 
     if alerts:
         for alert in alerts:
-            body += f"{alert['type']}\n"
-            body += alert['message']
-            body += "\n\n"
+            body_lines.append(alert['type'])
+            body_lines.append(alert['message'])
+            body_lines.append("")
+        if body_lines and body_lines[-1] == "":
+            body_lines.pop()
     else:
-        body += "No freeze detected\n"
+        body_lines.append("No freeze detected")
+        body_lines.append("")
+        details = []
         if min_temp_48h is not None:
-            body += f"48hr low: {min_temp_48h:.0f}F\n"
+            details.append(f"48hr low: {min_temp_48h:.0f}F")
         if min_temp_7d is not None:
-            body += f"7day low: {min_temp_7d:.0f}F\n"
+            details.append(f"7day low: {min_temp_7d:.0f}F")
+        if details:
+            body_lines.extend(details)
 
-    body += f"\n{LOCATION_NAME}\n"
-    body += f"{datetime.now().strftime('%m/%d %I:%M%p')}"
+    pacific_now = get_pacific_now()
+    if not body_lines or body_lines[-1] != "":
+        body_lines.append("")
+    body_lines.append(LOCATION_NAME)
+    body_lines.append(pacific_now.strftime('%m/%d %I:%M%p %Z'))
 
-    msg.attach(MIMEText(body, "plain"))
+    body = "\n".join(body_lines)
+
+    msg = MIMEText(body, "plain")
+    msg["From"] = sender_email
+    msg["To"] = recipient_email
 
     # Send email
     try:
@@ -322,8 +331,14 @@ def main():
 
     # Check for test mode
     test_mode = None
+    force_run = False
     if len(sys.argv) > 1:
-        test_mode = sys.argv[1].lower()
+        for arg in sys.argv[1:]:
+            if arg.lower() == "--force":
+                force_run = True
+            else:
+                test_mode = arg.lower()
+
         if test_mode in ["frost1", "frost2", "extended_freeze", "all"]:
             print(f"Running in TEST MODE: {test_mode}")
             print(f"Fetching real weather data for {LOCATION_NAME}...")
@@ -336,12 +351,22 @@ def main():
                 print(f"Sending {len(alerts)} TEST alert(s) with real weather data")
                 send_email_alert(alerts)
             return
-        else:
+        elif test_mode is not None and test_mode != "--force":
             print(f"Invalid test mode: {test_mode}")
             print("Valid options: frost1, frost2, extended_freeze, all")
             return
 
     print(f"Checking weather for {LOCATION_NAME}...")
+
+    if not force_run and os.environ.get("FORCE_RUN") != "1":
+        pacific_now = get_pacific_now()
+        if pacific_now.hour not in SCHEDULED_HOURS:
+            print(
+                "Current Pacific time is "
+                f"{pacific_now.strftime('%m/%d %I:%M%p %Z')} - outside the scheduled alert window."
+            )
+            print("Skipping weather check until the next 6 AM/PM Pacific run.")
+            return
 
     # Get weather forecast
     forecast = get_weather_forecast()
