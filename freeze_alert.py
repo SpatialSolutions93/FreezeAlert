@@ -47,7 +47,7 @@ def get_openmeteo_forecast():
         params = {
             "latitude": LAT,
             "longitude": LON,
-            "hourly": "temperature_2m",
+            "hourly": "temperature_2m,precipitation",
             "temperature_unit": "fahrenheit",
             "timezone": "America/Los_Angeles",
             "forecast_days": 7
@@ -58,14 +58,23 @@ def get_openmeteo_forecast():
 
         # Convert to NWS-like format
         periods = []
+        precip_series = data["hourly"].get("precipitation", [])
         for i, (time_str, temp) in enumerate(zip(data["hourly"]["time"], data["hourly"]["temperature_2m"])):
             if i >= 168:  # Limit to 7 days
                 break
-            periods.append({
+            period = {
                 "startTime": time_str,
                 "temperature": temp,
                 "name": f"Hour {i+1}"
-            })
+            }
+            if i < len(precip_series):
+                precip_amount = precip_series[i]
+                if precip_amount is not None:
+                    period["quantitativePrecipitation"] = {
+                        "value": precip_amount,
+                        "unitCode": "wmoUnit:mm"
+                    }
+            periods.append(period)
         return periods
     except Exception as e:
         print(f"Error fetching OpenMeteo data: {e}")
@@ -86,6 +95,96 @@ def save_alert_history(history):
     """Save the alert history"""
     with open(ALERT_HISTORY_FILE, 'w') as f:
         json.dump(history, f, indent=2)
+
+def convert_precipitation_to_inches(amount, unit):
+    """Convert precipitation measurements to inches."""
+    if amount is None:
+        return None
+    if not isinstance(amount, (int, float)):
+        return None
+
+    unit = (unit or "").lower()
+
+    if "mm" in unit or "millimeter" in unit:
+        return amount / 25.4
+    if "cm" in unit or "centimeter" in unit:
+        return amount / 2.54
+    if "m" in unit and "kg" not in unit:  # meters without kg (e.g., meters of snow)
+        return amount * 39.3701
+
+    # Default assumes inches if unit is unspecified or already inches
+    return amount
+
+def extract_precipitation_amount(period):
+    """Extract precipitation amount in inches from a forecast period."""
+    keys = [
+        "quantitativePrecipitation",
+        "precipitationAmount",
+        "precipitation",
+        "qpf"
+    ]
+
+    for key in keys:
+        value = period.get(key)
+        if value is None:
+            continue
+
+        amount = None
+        unit = ""
+
+        if isinstance(value, dict):
+            if "value" in value:
+                amount = value.get("value")
+                unit = value.get("unitCode", unit)
+            elif "values" in value and value["values"]:
+                first_value = value["values"][0]
+                if isinstance(first_value, dict):
+                    amount = first_value.get("value")
+                    unit = first_value.get("unitCode", unit)
+        elif isinstance(value, (int, float)):
+            amount = value
+        elif isinstance(value, list) and value:
+            first_value = value[0]
+            if isinstance(first_value, dict):
+                amount = first_value.get("value")
+                unit = first_value.get("unitCode", unit)
+            elif isinstance(first_value, (int, float)):
+                amount = first_value
+
+        converted = convert_precipitation_to_inches(amount, unit)
+        if converted is not None:
+            return max(converted, 0.0)
+
+    return None
+
+def calculate_precipitation_totals(forecast_periods):
+    """Calculate precipitation totals for the next 24h and 72h in inches."""
+    totals = {}
+    for hours in (24, 72):
+        total = 0.0
+        has_data = False
+        for period in forecast_periods[:hours]:
+            amount = extract_precipitation_amount(period)
+            if amount is not None:
+                total += amount
+                has_data = True
+        totals[hours] = total if has_data else None
+    return totals
+
+def format_precipitation_summary(totals):
+    """Return a compact precipitation summary string."""
+    if not totals:
+        return None
+
+    parts = []
+    for hours in (24, 72):
+        total = totals.get(hours)
+        if total is not None:
+            parts.append(f"{hours}h: {total:.2f}\"")
+        else:
+            parts.append(f"{hours}h: n/a")
+
+    return "Precipitation outlook — " + ", ".join(parts)
 
 def check_freezing_conditions(forecast_periods):
     """Analyze forecast for freezing conditions"""
@@ -208,7 +307,7 @@ def get_pacific_now():
     """Return the current time in Pacific time."""
     return datetime.now(PACIFIC_TZ)
 
-def send_email_alert(alerts, min_temp_48h=None, min_temp_7d=None):
+def send_email_alert(alerts, min_temp_48h=None, min_temp_7d=None, precip_summary=None):
     """Send email alerts using Gmail SMTP"""
     # Get email credentials from environment variables
     sender_email = os.environ.get("SENDER_EMAIL")
@@ -244,6 +343,11 @@ def send_email_alert(alerts, min_temp_48h=None, min_temp_7d=None):
             details.append(f"7day low: {min_temp_7d:.0f}F")
         if details:
             body_lines.extend(details)
+
+    if precip_summary:
+        if body_lines and body_lines[-1] != "":
+            body_lines.append("")
+        body_lines.append(precip_summary)
 
     pacific_now = get_pacific_now()
     if not body_lines or body_lines[-1] != "":
@@ -347,9 +451,11 @@ def main():
             forecast = get_weather_forecast()
 
             alerts = simulate_test_alerts(test_mode, forecast)
+            precip_totals = calculate_precipitation_totals(forecast or [])
+            precip_summary = format_precipitation_summary(precip_totals)
             if alerts:
                 print(f"Sending {len(alerts)} TEST alert(s) with real weather data")
-                send_email_alert(alerts)
+                send_email_alert(alerts, precip_summary=precip_summary)
             return
         elif test_mode is not None and test_mode != "--force":
             print(f"Invalid test mode: {test_mode}")
@@ -384,22 +490,24 @@ def main():
     min_temp_48h = None
     min_temp_7d = None
 
-    if forecast:
-        temps_48h = []
-        temps_7d = []
-        for i, period in enumerate(forecast):
-            temp = period.get("temperature", None)
-            if isinstance(temp, dict):
-                temp = temp.get("value", None)
-            if temp is not None and isinstance(temp, (int, float)):
-                temps_7d.append(temp)
-                if i < 48:
-                    temps_48h.append(temp)
+    temps_48h = []
+    temps_7d = []
+    for i, period in enumerate(forecast):
+        temp = period.get("temperature", None)
+        if isinstance(temp, dict):
+            temp = temp.get("value", None)
+        if temp is not None and isinstance(temp, (int, float)):
+            temps_7d.append(temp)
+            if i < 48:
+                temps_48h.append(temp)
 
-        if temps_48h:
-            min_temp_48h = min(temps_48h)
-        if temps_7d:
-            min_temp_7d = min(temps_7d)
+    if temps_48h:
+        min_temp_48h = min(temps_48h)
+    if temps_7d:
+        min_temp_7d = min(temps_7d)
+
+    precip_totals = calculate_precipitation_totals(forecast or [])
+    precip_summary = format_precipitation_summary(precip_totals)
 
     # Always send an email - either with alerts or status update
     if alerts:
@@ -407,7 +515,7 @@ def main():
     else:
         print("No freezing conditions detected - sending status update")
 
-    send_email_alert(alerts, min_temp_48h, min_temp_7d)
+    send_email_alert(alerts, min_temp_48h, min_temp_7d, precip_summary)
 
     # Print next 48 hours summary for logging
     print("\nNext 48 hours temperature summary:")
