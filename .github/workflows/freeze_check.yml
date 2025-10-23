@@ -2,9 +2,7 @@ name: Freeze Alert Check
 
 on:
   schedule:
-    # Run exactly at 6 AM and 6 PM Pacific, automatically handling DST shifts
-    - cron: '0 6,18 * * *'
-      timezone: 'America/Los_Angeles'
+    - cron: '0 14,2 * * *'
   workflow_dispatch:  # Allow manual trigger for testing
     inputs:
       test_mode:
