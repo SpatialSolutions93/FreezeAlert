@@ -358,16 +358,6 @@ def main():
 
     print(f"Checking weather for {LOCATION_NAME}...")
 
-    if not force_run and os.environ.get("FORCE_RUN") != "1":
-        pacific_now = get_pacific_now()
-        if pacific_now.hour not in SCHEDULED_HOURS:
-            print(
-                "Current Pacific time is "
-                f"{pacific_now.strftime('%m/%d %I:%M%p %Z')} - outside the scheduled alert window."
-            )
-            print("Skipping weather check until the next 6 AM/PM Pacific run.")
-            return
-
     # Get weather forecast
     forecast = get_weather_forecast()
 
